@@ -1,36 +1,44 @@
+// 1. MUST BE THE ABSOLUTE FIRST LINES OF CODE IN YOUR ENTIRE FILE
+require('dotenv').config();
+
 const express = require('express');
 const OAuthClient = require('intuit-oauth');
 const fetch = require('node-fetch');
 const cors = require('cors');
-require('dotenv').config();
 
-// 1. Initialize 'app' FIRST before any routes are created
 const app = express();
 app.use(cors()); 
 
-// 2. Initialize the QuickBooks Client
+// 2. HARDCODE fallback URLs to bypass Render environment loading bugs completely
+const clientId = process.env.QBO_CLIENT_ID;
+const clientSecret = process.env.QBO_CLIENT_SECRET;
+const redirectUri = process.env.QBO_REDIRECT_URI || "https://onrender.com"; 
+
+console.log("Initializing QBO Client with Redirect URI:", redirectUri);
+
 const oauthClient = new OAuthClient({
-  clientId: process.env.QBO_CLIENT_ID,
-  clientSecret: process.env.QBO_CLIENT_SECRET,
+  clientId: clientId,
+  clientSecret: clientSecret,
   environment: 'sandbox', // Change to 'production' if using live QB keys
-  redirectUri: process.env.QBO_REDIRECT_URI,
+  redirectUri: redirectUri,
 });
 
-// 3. Root fallback route so you don't get "Cannot GET /"
 app.get('/', (req, res) => {
   res.send('QBO Middleware is running! Go to /login to authenticate, or /api/customers to fetch data.');
 });
 
-// 4. QuickBooks Login Handshake Route
 app.get('/login', (req, res) => {
-  const authUri = oauthClient.authorizeUri({
-    scope: [OAuthClient.scopes.Accounting],
-    state: 'intuit-test',
-  });
-  res.redirect(authUri);
+  try {
+    const authUri = oauthClient.authorizeUri({
+      scope: [OAuthClient.scopes.Accounting],
+      state: 'intuit-test',
+    });
+    res.redirect(authUri);
+  } catch (error) {
+    res.status(500).send(`Error creating authorization URI: ${error.message}`);
+  }
 });
 
-// 5. QuickBooks Redirect Callback Route
 app.get('/callback', async (req, res) => {
   try {
     const authResponse = await oauthClient.createToken(req.url);
@@ -40,7 +48,6 @@ app.get('/callback', async (req, res) => {
   }
 });
 
-// 6. Jotform API Data Dropdown Fetch Route
 app.get('/api/customers', async (req, res) => {
   try {
     const token = oauthClient.getToken();
@@ -61,7 +68,7 @@ app.get('/api/customers', async (req, res) => {
 
     if (response.status === 401) {
       console.log("Token expired. Attempting automated refresh...");
-      const authResponse = await oauthClient.refresh();
+      await oauthClient.refresh();
       const newToken = oauthClient.getToken();
       response = await fetch(url, {
         method: 'GET',
@@ -86,6 +93,5 @@ app.get('/api/customers', async (req, res) => {
   }
 });
 
-// 7. Bind the server to your open port
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running smoothly on port ${PORT}`));
