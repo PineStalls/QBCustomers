@@ -1,17 +1,7 @@
-{
-  "name": "qbo-jotform-middleware",
-  "version": "1.0.0",
-  "description": "Secure middleware to feed QuickBooks Online data to a Jotform Remote Data Dropdown",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "node-quickbooks": "^2.0.50"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  }
+"dependencies": {
+  "cors": "^2.8.5",
+  "dotenv": "^16.4.5",
+  "express": "^4.19.2",
+  "intuit-oauth": "^4.0.0",
+  "node-fetch": "^2.7.0"
 }
