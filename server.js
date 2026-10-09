@@ -36,8 +36,11 @@ app.get('/callback', async (req, res) => {
 // 3. STEP THREE: Jotform hits this URL to get the dropdown list
 app.get('/api/customers', async (req, res) => {
   try {
-    if (!oauthClient.isTokenValid()) {
-      // Try to refresh token if expired
+    // 💡 FIX: Check if token exists, then check validity on the token object itself
+    const token = oauthClient.getToken();
+    
+    if (!token || !token.isTokenValid()) {
+      console.log("Token expired or missing. Refreshing...");
       await oauthClient.refresh();
     }
 
@@ -52,6 +55,22 @@ app.get('/api/customers', async (req, res) => {
         'Accept': 'application/json',
       }
     });
+
+    const data = await response.json();
+    const customers = data.QueryResponse.Customer || [];
+
+    // Formatted exactly how Jotform Remote Dropdown expects it
+    const formattedData = customers.map(cust => ({
+      value: cust.Id,
+      text: cust.DisplayName
+    }));
+
+    res.json(formattedData);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 
     const data = await response.json();
     const customers = data.QueryResponse.Customer || [];
