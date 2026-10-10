@@ -23,9 +23,9 @@ const oauthClient = new OAuthClient({
   redirectUri: redirectUri,
 });
 
-app.get('/', (req, res) => {
-  res.send('QBO Middleware is running! Go to /login to authenticate, or /api/customers to fetch data.');
-});
+//app.get('/', (req, res) => {
+//  res.send('QBO Middleware is running! Go to /login to authenticate, or /api/customers to fetch data.');
+//});
 
 app.get('/login', (req, res) => {
   try {
