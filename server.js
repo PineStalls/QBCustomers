@@ -19,7 +19,7 @@ console.log("Initializing QBO Client with Redirect URI:", redirectUri);
 const oauthClient = new OAuthClient({
   clientId: clientId,
   clientSecret: clientSecret,
-  environment: 'production', // Change to 'production' if using live QB keys
+  environment: 'sandbox', // Change to 'production' if using live QB keys
   redirectUri: redirectUri,
 });
 
