@@ -90,10 +90,19 @@ app.get('/api/customers', async (req, res) => {
   }
 });
 
-// ROUTE 4: Home route moved to the absolute bottom so it doesn't overlap paths
+// ROUTE 4: Home route with a direct clickable link to break browser address-bar caching
 app.get('/', (req, res) => {
-  res.send('Server is live! Please manually type /login into your address bar to connect.');
+  res.send(`
+    <html>
+      <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 50px;">
+        <h2>QBO Middleware Server is Live!</h2>
+        <p>Do not type into the address bar. Click the button below to connect:</p>
+        <a href="/login" style="display: inline-block; padding: 10px 20px; background-color: #2b78c5; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">👉 Click Here to Connect QuickBooks</a>
+      </body>
+    </html>
+  `);
 });
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server executing live on port ${PORT}`));
