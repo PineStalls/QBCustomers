@@ -6,12 +6,12 @@ const cors = require('cors');
 const app = express();
 app.use(cors()); 
 
-// 👈 PASTE YOUR COPIED INTUIT STRINGS DIRECTLY INSIDE THESE QUOTES
+// 👈 MANUALLY ENTER YOUR INTUIT COPIED STRINGS IN THESE EXACT QUOTES
 const CLIENT_ID = 'ABEYdP6kacVC3MUK1LaKJPCsJrP5ugRLdVChCBw7hZaF7PMvsc';
 const CLIENT_SECRET = 'A01XqO7KN3CA3yEgz7vHME0LIKQItG7pvAP9PwBu';
 const REDIRECT_URI = 'https://qbcustomers.onrender.com';
 
-console.log("Initializing QBO Client using explicit hardcoded parameters.");
+console.log("Initializing QBO Client using explicit parameters.");
 
 const oauthClient = new OAuthClient({
   clientId: CLIENT_ID,
@@ -20,31 +20,32 @@ const oauthClient = new OAuthClient({
   redirectUri: REDIRECT_URI,
 });
 
-app.get('/', (req, res) => {
-  res.send('QBO Middleware is running! Go to /login to authenticate, or /api/customers to fetch data.');
-});
-
+// ROUTE 1: Explicit login path
 app.get('/login', (req, res) => {
   try {
+    console.log("Caught request on /login. Generating Intuit URI...");
     const authUri = oauthClient.authorizeUri({
-      scope: [OAuthClient.scopes.Accounting],
+      scope: ['com.intuit.quickbooks.accounting'], // Fixes explicit string array matching
       state: 'intuit-test',
     });
-    res.redirect(authUri);
+    console.log("Redirecting to Intuit: ", authUri);
+    return res.redirect(authUri);
   } catch (error) {
-    res.status(500).send(`Error creating authorization URI: ${error.message}`);
+    return res.status(500).send(`Error creating authorization URI: ${error.message}`);
   }
 });
 
+// ROUTE 2: Callback route
 app.get('/callback', async (req, res) => {
   try {
-    const authResponse = await oauthClient.createToken(req.url);
-    res.send('Successfully authenticated with QuickBooks! You can now use Jotform.');
+    await oauthClient.createToken(req.url);
+    return res.send('Successfully authenticated with QuickBooks! You can now use Jotform.');
   } catch (e) {
-    res.status(500).send(`Authentication error: ${e.message}`);
+    return res.status(500).send(`Authentication error: ${e.message}`);
   }
 });
 
+// ROUTE 3: Jotform Fetch API
 app.get('/api/customers', async (req, res) => {
   try {
     const token = oauthClient.getToken();
@@ -64,7 +65,6 @@ app.get('/api/customers', async (req, res) => {
     });
 
     if (response.status === 401) {
-      console.log("Token expired. Attempting automated refresh...");
       await oauthClient.refresh();
       const newToken = oauthClient.getToken();
       response = await fetch(url, {
@@ -84,11 +84,16 @@ app.get('/api/customers', async (req, res) => {
       text: cust.DisplayName
     }));
 
-    res.json(formattedData);
+    return res.json(formattedData);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
   }
 });
 
+// ROUTE 4: Home route moved to the absolute bottom so it doesn't overlap paths
+app.get('/', (req, res) => {
+  res.send('Server is live! Please manually type /login into your address bar to connect.');
+});
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running smoothly on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server executing live on port ${PORT}`));
