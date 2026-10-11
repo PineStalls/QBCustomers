@@ -12,7 +12,7 @@ const {
   QB_CLIENT_SECRET,
   QB_REFRESH_TOKEN,
   QB_REALM_ID,
-  QB_ENVIRONMENT = 'production', // or 'sandbox'
+  QB_ENVIRONMENT = 'sandbox', // or 'sandbox'
   API_SECRET          // optional simple protection key
 } = process.env;
 
