@@ -20,18 +20,29 @@ const oauthClient = new OAuthClient({
 
 let backupTokenString = "";
 
+// 🛠️ DIAGNOSTIC ROUTE 1: Visible Login Error Catching
 app.get('/login', (req, res) => {
   try {
+    console.log("Generating secure Intuit path...");
     const authUri = oauthClient.authorizeUri({
       scope: [OAuthClient.scopes.Accounting], 
       state: 'intuit-test',
     });
     return res.redirect(authUri);
   } catch (error) {
-    return res.status(500).send(`Authentication setup broken: ${error.message}`);
+    console.error("LOGIN ROUTE FAILURE:", error);
+    // This displays the exact issue on your browser screen
+    return res.status(500).send(`
+      <div style="font-family: Arial, sans-serif; padding: 20px; border: 2px solid red; background: #fff5f5; border-radius: 5px; margin: 50px auto; max-width: 600px;">
+        <h3 style="color: red; margin-top: 0;">❌ Crash Generating QuickBooks Login Link</h3>
+        <p><strong>Error Message:</strong> ${error.message}</p>
+        <p><em>Check that your Client ID and Client Secret do not contain typos or extra spaces inside the index.js file.</em></p>
+      </div>
+    `);
   }
 });
 
+// 🛠️ DIAGNOSTIC ROUTE 2: Visible Callback Error Catching
 app.get('/callback', async (req, res) => {
   try {
     const absoluteFullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
@@ -53,7 +64,20 @@ app.get('/callback', async (req, res) => {
       </html>
     `);
   } catch (e) {
-    return res.status(500).send(`Authentication token replacement crash: ${e.message}`);
+    console.error("CALLBACK SWAP FAILURE:", e);
+    // This captures and displays any handshake token trade rejection errors
+    let errorDetail = e.message;
+    if (e.authResponse && e.authResponse.text) {
+      errorDetail = e.authResponse.text; // Captures raw response body from Intuit servers
+    }
+    return res.status(500).send(`
+      <div style="font-family: Arial, sans-serif; padding: 20px; border: 2px solid red; background: #fff5f5; border-radius: 5px; margin: 50px auto; max-width: 600px;">
+        <h3 style="color: red; margin-top: 0;">❌ QuickBooks Token Exchange Failed</h3>
+        <p><strong>Raw Server Error:</strong></p>
+        <pre style="background: #eee; padding: 10px; border-radius: 3px; overflow-x: auto;">${errorDetail}</pre>
+        <p><em>This usually means the Redirect URI registered in the Intuit Developer portal does not match your Render callback address exactly.</em></p>
+      </div>
+    `);
   }
 });
 
@@ -73,8 +97,6 @@ app.get('/api/customers', async (req, res) => {
     }
 
     const companyId = token.realmId;
-    
-    // 💡 THE ULTIMATE PATH FIX: Replaced broken intuit.com string template with the absolute official sandbox endpoint
     const url = `https://intuit.com{companyId}/query?query=select * from Customer&minorversion=65`;
 
     let response = await fetch(url, {
