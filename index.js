@@ -2,22 +2,49 @@ const express = require('express');
 const OAuthClient = require('intuit-oauth');
 const fetch = require('node-fetch');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 app.use(cors());
 
-// Initialize the QuickBooks Client using standard system environment flags
+// Target file system cache path to shield the token from spin-down memory wipes
+const CACHE_PATH = path.join(__dirname, 'token_cache.json');
+
 const oauthClient = new OAuthClient({
   clientId: process.env.QBO_CLIENT_ID,
   clientSecret: process.env.QBO_CLIENT_SECRET,
   environment: 'sandbox', 
-  redirectUri: process.env.QBO_REDIRECT_URI || 'https://onrender.com'
+  redirectUri: process.env.QBO_REDIRECT_URI
 });
 
-// Explicit session pointer to hold token values across network requests
-global.qboAuthSession = null;
+// Helper Function: Write Token payload to disk cache instantly
+function saveTokenToDisk(authResponse) {
+  try {
+    const rawJson = authResponse.getJson();
+    fs.writeFileSync(CACHE_PATH, JSON.stringify(rawJson, null, 2), 'utf8');
+    console.log("SUCCESS: Active token saved securely to disk cache.");
+  } catch (err) {
+    console.error("Failed caching token payload to disk:", err.message);
+  }
+}
 
-// ROUTE 1: Explicit Handshake Entry Point
+// Helper Function: Load Token payload from disk cache dynamically
+function loadTokenFromDisk() {
+  try {
+    if (fs.existsSync(CACHE_PATH)) {
+      const fileData = fs.readFileSync(CACHE_PATH, 'utf8');
+      const tokenJson = JSON.parse(fileData);
+      oauthClient.setToken(tokenJson); // Force-inject credentials back into SDK instance
+      console.log("SUCCESS: Recovered valid token from disk cache.");
+      return true;
+    }
+  } catch (err) {
+    console.error("Failed restoring token payload from disk cache:", err.message);
+  }
+  return false;
+}
+
 app.get('/login', (req, res) => {
   try {
     const authUri = oauthClient.authorizeUri({
@@ -30,27 +57,24 @@ app.get('/login', (req, res) => {
   }
 });
 
-// ROUTE 2: Callback Processor
 app.get('/callback', async (req, res) => {
   try {
-    // Construct the verified absolute target path URL explicitly for proxy layers
     const completeTargetUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
-    
-    // Swap code flags for active access properties
     const authResponse = await oauthClient.createToken(completeTargetUrl);
-    global.qboAuthSession = authResponse.getJson();
     
-    // Serve an explicit landing screen instead of immediately closing or looping
+    // Save to file storage right away so token survives server sleep states
+    saveTokenToDisk(authResponse);
+    
     return res.send(`
       <html>
         <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 100px; background-color: #f7f9fc;">
           <div style="display: inline-block; padding: 40px; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); max-width: 500px;">
             <h2 style="color: #2ecc71; margin-bottom: 10px;">✅ Connection Established!</h2>
-            <p style="color: #555; line-height: 1.5;">Your <strong>CustomerNames</strong> integration app has completed authentication with your QuickBooks Sandbox organization.</p>
+            <p style="color: #555; line-height: 1.5;">Your <strong>CustomerNames</strong> app is authenticated.</p>
             <div style="background: #f1f2f6; padding: 12px; border-radius: 4px; font-weight: bold; margin: 20px 0; color: #333;">
-              Data Sync: Active 🟢
+              Data Sync Store: PERSISTENT 🟢
             </div>
-            <p style="font-size: 14px; color: #888;">You can now close this tab and proceed directly to your Jotform layout configuration.</p>
+            <p style="font-size: 14px; color: #888;">You can now close this window and proceed to your Jotform setup.</p>
           </div>
         </body>
       </html>
@@ -60,12 +84,10 @@ app.get('/callback', async (req, res) => {
   }
 });
 
-// ROUTE 3: Jotform Fetch API Pipeline
 app.get('/api/customers', async (req, res) => {
   try {
-    if (global.qboAuthSession) {
-      oauthClient.setToken(global.qboAuthSession);
-    }
+    // Check local storage file if memory layer was reset during a server sleep
+    loadTokenFromDisk();
 
     const token = oauthClient.getToken();
     if (!token || !token.access_token) {
@@ -85,14 +107,15 @@ app.get('/api/customers', async (req, res) => {
 
     // Handle token rotation transparently if the session flags expire natively
     if (response.status === 401) {
-      const refreshResponse = await oauthClient.refresh();
-      global.qboAuthSession = refreshResponse.getJson();
-      oauthClient.setToken(global.qboAuthSession);
+      console.log("Token expired. Initiating automatic refresh...");
+      const refreshResponse = await oauthClient.refresh(); //
+      saveTokenToDisk(refreshResponse); // Save the freshly generated token to disk file
       
+      const newToken = oauthClient.getToken();
       response = await fetch(queryUrl, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${global.qboAuthSession.access_token}`,
+          'Authorization': `Bearer ${newToken.access_token}`,
           'Accept': 'application/json'
         }
       });
@@ -112,7 +135,6 @@ app.get('/api/customers', async (req, res) => {
   }
 });
 
-// ROUTE 4: Core Server Homepage Entry
 app.get('/', (req, res) => {
   res.send(`
     <html>
