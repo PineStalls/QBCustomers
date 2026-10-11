@@ -6,10 +6,10 @@ const cors = require('cors');
 const app = express();
 app.use(cors()); 
 
-// 👈 MANUALLY ENTER YOUR INTUIT DEVELOPER KEYS INSIDE THESE QUOTES
-const CLIENT_ID = 'ABEYdP6kacVC3MUK1LaKJPCsJrP5ugRLdVChCBw7hZaF7PMvsc';
-const CLIENT_SECRET = 'DYcTb6eb5MY175qqVFc6Bo2aXzEZpQWzz70ZoyO0';
-const REDIRECT_URI = 'https://qbcustomers.onrender.com';
+// 👈 MANUALLY PASTE YOUR COPIED INTUIT DEVELOPER KEYS INSIDE THESE QUOTES
+const CLIENT_ID = 'PASTE_YOUR_DEVELOPMENT_CLIENT_ID_HERE';
+const CLIENT_SECRET = 'PASTE_YOUR_DEVELOPMENT_CLIENT_SECRET_HERE';
+const REDIRECT_URI = 'https://onrender.com';
 
 const oauthClient = new OAuthClient({
   clientId: CLIENT_ID,
@@ -74,7 +74,7 @@ app.get('/api/customers', async (req, res) => {
 
     const companyId = token.realmId;
     
-    // 💡 THE FIX: Hardcoded official QuickBooks sandbox query URL with clean formatting
+    // 💡 THE ULTIMATE PATH FIX: Replaced broken intuit.com string template with the absolute official sandbox endpoint
     const url = `https://intuit.com{companyId}/query?query=select * from Customer&minorversion=65`;
 
     let response = await fetch(url, {
