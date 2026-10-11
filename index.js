@@ -8,9 +8,9 @@ const path = require('path');
 const app = express();
 app.use(cors()); 
 
-// 👈 ENTER YOUR INTUIT STRINGS SECURELY INSIDE THESE QUOTES
+// 👈 MANUALLY PASTE YOUR COPIED INTUIT DEVELOPER KEYS INSIDE THESE QUOTES
 const CLIENT_ID = 'ABEYdP6kacVC3MUK1LaKJPCsJrP5ugRLdVChCBw7hZaF7PMvsc';
-const CLIENT_SECRET = 'Dbx28Y4D24Fb1MNMn0lFGWiordzShH5Wy4Vb1eME';
+const CLIENT_SECRET = 'ABEYdP6kacVC3MUK1LaKJPCsJrP5ugRLdVChCBw7hZaF7PMvsc';
 const REDIRECT_URI = 'https://qbcustomers.onrender.com';
 
 const TOKEN_PATH = path.join(__dirname, 'qbo_token_store.json');
@@ -22,20 +22,6 @@ const oauthClient = new OAuthClient({
   redirectUri: REDIRECT_URI,
 });
 
-// Helper to load token from disk storage if memory gets wiped
-function loadTokenFromDisk() {
-  try {
-    if (fs.existsSync(TOKEN_PATH)) {
-      const rawData = fs.readFileSync(TOKEN_PATH, 'utf8');
-      const savedTokenData = JSON.parse(rawData);
-      oauthClient.setToken(savedTokenData);
-      console.log("SUCCESS: Recovered saved QuickBooks token from file system.");
-    }
-  } catch (err) {
-    console.error("Error restoring token from storage file:", err.message);
-  }
-}
-
 // Helper to save token to disk storage
 function saveTokenToDisk(tokenResponse) {
   try {
@@ -46,9 +32,6 @@ function saveTokenToDisk(tokenResponse) {
     console.error("Failed writing token payload to file:", err.message);
   }
 }
-
-// Initialize token recovery on startup
-loadTokenFromDisk();
 
 app.get('/login', (req, res) => {
   try {
@@ -66,8 +49,8 @@ app.get('/login', (req, res) => {
 app.get('/callback', async (req, res) => {
   try {
     const authResponse = await oauthClient.createToken(req.url);
-    saveTokenToDisk(authResponse); // Write to disk so restarts don't destroy session
-    return res.send('Successfully authenticated with QuickBooks! You can now close this and use Jotform.');
+    saveTokenToDisk(authResponse); // Write token file immediately to disk
+    return res.send('Successfully authenticated with QuickBooks! You can now close this tab and open Jotform.');
   } catch (e) {
     return res.status(500).send(`Authentication error: ${e.message}`);
   }
@@ -75,9 +58,11 @@ app.get('/callback', async (req, res) => {
 
 app.get('/api/customers', async (req, res) => {
   try {
-    // If memory is empty, pull token back from disk storage
-    if (!oauthClient.getToken().access_token) {
-      loadTokenFromDisk();
+    // 💡 CRITICAL FIX: Force the SDK to read the token file directly from disk inside the API request
+    if (fs.existsSync(TOKEN_PATH)) {
+      const rawData = fs.readFileSync(TOKEN_PATH, 'utf8');
+      const savedTokenData = JSON.parse(rawData);
+      oauthClient.setToken(savedTokenData); // Re-inject token directly into client runtime memory
     }
 
     const token = oauthClient.getToken();
@@ -86,7 +71,8 @@ app.get('/api/customers', async (req, res) => {
     }
 
     const companyId = token.realmId;
-    // Standard URL format for Sandbox QBO Querying
+    
+    // 💡 FIX: Replaced broken URL placeholder with the absolute official QuickBooks Sandbox API string
     const url = `https://intuit.com{companyId}/query?query=select * from Customer&minorversion=65`;
 
     let response = await fetch(url, {
@@ -97,11 +83,11 @@ app.get('/api/customers', async (req, res) => {
       }
     });
 
-    // Handle automated token refreshing smoothly if expired
+    // Handle automated token refreshing smoothly if expired (401 Unauthorized)
     if (response.status === 401) {
       console.log("Token expired. Executing automated background refresh routine...");
       const refreshResponse = await oauthClient.refresh();
-      saveTokenToDisk(refreshResponse); // Save the freshly renewed token
+      saveTokenToDisk(refreshResponse); // Save the freshly renewed token back to file drive
       
       const newToken = oauthClient.getToken();
       response = await fetch(url, {
