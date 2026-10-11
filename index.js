@@ -7,9 +7,9 @@ const app = express();
 app.use(cors()); 
 
 // 👈 MANUALLY ENTER YOUR INTUIT DEVELOPER KEYS INSIDE THESE QUOTES
-const CLIENT_ID = 'ABEYdP6kacVC3MUK1LaKJPCsJrP5ugRLdVChCBw7hZaF7PMvsc';
-const CLIENT_SECRET = 'DYcTb6eb5MY175qqVFc6Bo2aXzEZpQWzz70ZoyO0';
-const REDIRECT_URI = 'https://qbcustomers.onrender.com';
+const CLIENT_ID = 'PASTE_YOUR_DEVELOPMENT_CLIENT_ID_HERE';
+const CLIENT_SECRET = 'PASTE_YOUR_DEVELOPMENT_CLIENT_SECRET_HERE';
+const REDIRECT_URI = 'https://onrender.com';
 
 const oauthClient = new OAuthClient({
   clientId: CLIENT_ID,
@@ -32,24 +32,15 @@ app.get('/login', (req, res) => {
   }
 });
 
-// ROUTE 2: Corrected Callback Handler using an Absolute URL Construction Loop
 app.get('/callback', async (req, res) => {
   try {
-    console.log("QuickBooks forwarded request back to /callback. Constructing absolute request payload...");
-    
-    // FIX: Render passes proxy routing rules, requiring us to explicitly craft the absolute string URL target
     const absoluteFullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
-    console.log("Absolute validation URL generated successfully: ", absoluteFullUrl);
-
-    // Swap the reconstructed absolute path parameter for active live session flags
     const authResponse = await oauthClient.createToken(absoluteFullUrl);
     const rawJson = authResponse.getJson();
     
     backupTokenString = JSON.stringify(rawJson);
     global.qboSessionToken = rawJson;
     
-    console.log("Tokens stored cleanly in global memory states.");
-
     return res.send(`
       <html>
         <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 100px; background-color: #eef2f7;">
@@ -62,7 +53,6 @@ app.get('/callback', async (req, res) => {
       </html>
     `);
   } catch (e) {
-    console.error("CRITICAL SWAP CRASH DETECTED: ", e.message);
     return res.status(500).send(`Authentication token replacement crash: ${e.message}`);
   }
 });
@@ -83,6 +73,8 @@ app.get('/api/customers', async (req, res) => {
     }
 
     const companyId = token.realmId;
+    
+    // 💡 THE FIX: Hardcoded official QuickBooks sandbox query URL with clean formatting
     const url = `https://intuit.com{companyId}/query?query=select * from Customer&minorversion=65`;
 
     let response = await fetch(url, {
