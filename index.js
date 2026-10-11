@@ -2,18 +2,14 @@ const express = require('express');
 const OAuthClient = require('intuit-oauth');
 const fetch = require('node-fetch');
 const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
 
 const app = express();
 app.use(cors()); 
 
 // 👈 MANUALLY PASTE YOUR COPIED INTUIT DEVELOPER KEYS INSIDE THESE QUOTES
-const CLIENT_ID = 'ABEYdP6kacVC3MUK1LaKJPCsJrP5ugRLdVChCBw7hZaF7PMvsc';
-const CLIENT_SECRET = 'Dbx28Y4D24Fb1MNMn0lFGWiordzShH5Wy4Vb1eME';
-const REDIRECT_URI = 'https://qbcustomers.onrender.com';
-
-const TOKEN_PATH = path.join(__dirname, 'qbo_token_store.json');
+const CLIENT_ID = 'PASTE_YOUR_DEVELOPMENT_CLIENT_ID_HERE';
+const CLIENT_SECRET = 'PASTE_YOUR_DEVELOPMENT_CLIENT_SECRET_HERE';
+const REDIRECT_URI = 'https://onrender.com';
 
 const oauthClient = new OAuthClient({
   clientId: CLIENT_ID,
@@ -22,20 +18,12 @@ const oauthClient = new OAuthClient({
   redirectUri: REDIRECT_URI,
 });
 
-// Helper to save token to disk storage
-function saveTokenToDisk(tokenResponse) {
-  try {
-    const tokenJson = tokenResponse.getJson();
-    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokenJson, null, 2), 'utf8');
-    console.log("SUCCESS: Cached active token seamlessly to disk storage.");
-  } catch (err) {
-    console.error("Failed writing token payload to file:", err.message);
-  }
-}
+// Global static storage object to prevent Render free-tier file system wipes
+global.qboSessionToken = null;
 
 app.get('/login', (req, res) => {
   try {
-    console.log("Caught request on /login. Generating secure Intuit path...");
+    console.log("Processing /login request...");
     const authUri = oauthClient.authorizeUri({
       scope: [OAuthClient.scopes.Accounting], 
       state: 'intuit-test',
@@ -49,8 +37,10 @@ app.get('/login', (req, res) => {
 app.get('/callback', async (req, res) => {
   try {
     const authResponse = await oauthClient.createToken(req.url);
-    saveTokenToDisk(authResponse); // Write token file immediately to disk
-    return res.send('Successfully authenticated with QuickBooks! You can now close this tab and open Jotform.');
+    // Secure the raw json string into a global application configuration scope
+    global.qboSessionToken = authResponse.getJson();
+    console.log("SUCCESS: Global session memory locked.");
+    return res.send('Successfully authenticated with QuickBooks! You can now close this tab and look at Jotform.');
   } catch (e) {
     return res.status(500).send(`Authentication error: ${e.message}`);
   }
@@ -58,11 +48,9 @@ app.get('/callback', async (req, res) => {
 
 app.get('/api/customers', async (req, res) => {
   try {
-    // 💡 CRITICAL FIX: Force the SDK to read the token file directly from disk inside the API request
-    if (fs.existsSync(TOKEN_PATH)) {
-      const rawData = fs.readFileSync(TOKEN_PATH, 'utf8');
-      const savedTokenData = JSON.parse(rawData);
-      oauthClient.setToken(savedTokenData); // Re-inject token directly into client runtime memory
+    // Restore the session from global configuration if runtime tracking loops reset
+    if (global.qboSessionToken) {
+      oauthClient.setToken(global.qboSessionToken);
     }
 
     const token = oauthClient.getToken();
@@ -71,10 +59,8 @@ app.get('/api/customers', async (req, res) => {
     }
 
     const companyId = token.realmId;
-    
-    // 💡 CORRECT URL: Replace line 61 with this absolute path:
-const url = `https://sandbox-quickbooks.api.intuit.com/v3/company/${companyId}/query?query=select * from Customer&minorversion=65`;
-
+    // Cleared structural string placeholder bugs from previous iterations
+    const url = `https://intuit.com{companyId}/query?query=select * from Customer&minorversion=65`;
 
     let response = await fetch(url, {
       method: 'GET',
@@ -84,11 +70,11 @@ const url = `https://sandbox-quickbooks.api.intuit.com/v3/company/${companyId}/q
       }
     });
 
-    // Handle automated token refreshing smoothly if expired (401 Unauthorized)
+    // Handle token refresh logic natively if 401 token expiration occurs
     if (response.status === 401) {
-      console.log("Token expired. Executing automated background refresh routine...");
+      console.log("Token expired. Refreshing session flags...");
       const refreshResponse = await oauthClient.refresh();
-      saveTokenToDisk(refreshResponse); // Save the freshly renewed token back to file drive
+      global.qboSessionToken = refreshResponse.getJson();
       
       const newToken = oauthClient.getToken();
       response = await fetch(url, {
