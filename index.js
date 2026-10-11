@@ -7,8 +7,8 @@ const app = express();
 app.use(cors()); 
 
 // 👈 MANUALLY PASTE YOUR COPIED INTUIT DEVELOPER KEYS INSIDE THESE QUOTES
-const CLIENT_ID = 'PASTE_YOUR_DEVELOPMENT_CLIENT_ID_HERE';
-const CLIENT_SECRET = 'PASTE_YOUR_DEVELOPMENT_CLIENT_SECRET_HERE';
+const CLIENT_ID = 'ABEYdP6kacVC3MUK1LaKJPCsJrP5ugRLdVChCBw7hZaF7PMvsc';
+const CLIENT_SECRET = 'Dbx28Y4D24Fb1MNMn0lFGWiordzShH5Wy4Vb1eME';
 const REDIRECT_URI = 'https://onrender.com';
 
 const oauthClient = new OAuthClient({
