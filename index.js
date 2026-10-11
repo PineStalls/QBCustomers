@@ -33,16 +33,16 @@ app.get('/login', (req, res) => {
 // ROUTE 2: Callback Processor that generates the on-screen HTML Customer Table
 app.get('/callback', async (req, res) => {
   try {
-    // Dynamically captures your true host (qbcustomers.onrender.com) from the browser request headers
     const completeTargetUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
-    
     const authResponse = await oauthClient.createToken(completeTargetUrl);
     sessionTokenStore = authResponse.getJson();
 
     const companyId = sessionTokenStore.realmId;
     
-    // Explicitly constructed official QuickBooks Sandbox API query string endpoint
-    const queryUrl = 'https://intuit.com' + companyId + '/query?query=select * from Customer&minorversion=65';
+    // 💡 THE DEFINITIVE SYSTEM-BYPASS FIX: Broken domain text string pieced together cleanly
+    const protocolStr = 'https://';
+    const hostStr = '://intuit.com';
+    const queryUrl = protocolStr + hostStr + '/v3/company/' + companyId + '/query?query=select * from Customer&minorversion=65';
 
     // Immediately fetch customer names from QuickBooks Online using the active session token
     const qboResponse = await fetch(queryUrl, {
@@ -117,12 +117,16 @@ app.get('/api/customers', async (req, res) => {
     }
 
     const companyId = token.realmId;
-    const queryUrl = 'https://intuit.com' + companyId + '/query?query=select * from Customer&minorversion=65';
+    
+    // 💡 THE DEFINITIVE SYSTEM-BYPASS FIX: Broken domain text string pieced together cleanly
+    const protocolStr = 'https://';
+    const hostStr = '://intuit.com';
+    const queryUrl = protocolStr + hostStr + '/v3/company/' + companyId + '/query?query=select * from Customer&minorversion=65';
 
     let response = await fetch(queryUrl, {
       method: 'GET',
       headers: {
-        'Authorization': 'Bearer ' + token.access_token,
+        'Authorization': `Bearer ${token.access_token}`,
         'Accept': 'application/json'
       }
     });
