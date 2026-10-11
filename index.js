@@ -11,7 +11,7 @@ const oauthClient = new OAuthClient({
   clientId: process.env.QBO_CLIENT_ID,
   clientSecret: process.env.QBO_CLIENT_SECRET,
   environment: 'sandbox', 
-  redirectUri: process.env.QBO_REDIRECT_URI || 'https://onrender.com'
+  redirectUri: process.env.QBO_REDIRECT_URI || 'https://qbcustomers.onrender.com'
 });
 
 // Memory cache block to preserve token data while your server stays awake
