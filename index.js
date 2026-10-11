@@ -12,14 +12,13 @@ app.get('/api/jotform-customers', async (req, res) => {
         const query = "SELECT DisplayName, Id FROM Customer WHERE Active = true MAXRESULTS 500";
         
         const response = await axios({
-            method: 'get',
-            url: `https://intuit.com{QBO_COMPANY_ID}/query?query=${encodeURIComponent(query)}`,
-            headers: {
-                'Authorization': `Bearer ${QBO_ACCESS_TOKEN}`,
-                'Accept': 'application/json',
-                'Content-Type': 'text/plain'
-            }
-        });
+         method: 'get',
+         url: `https://quickbooks.api.intuit.com/v3/company/${process.env.QB_REALM_ID}/query?query=${encodeURIComponent(query)}&minorversion=75`,
+         headers: {
+           'Authorization': `Bearer ${accessToken}`,   // use the variable that holds the fresh access token
+           'Accept': 'application/json'
+         }
+       });
 
         // Safe extraction of customers array
         const qboCustomers = response.data.QueryResponse.Customer || [];
