@@ -2,26 +2,22 @@ const express = require('express');
 const OAuthClient = require('intuit-oauth');
 const fetch = require('node-fetch');
 const cors = require('cors');
-const cookieParser = require('cookie-parser');
 
 const app = express();
+app.use(cors());
 
-// 💡 CRITICAL FIX: CORS must be configured explicitly to allow credential tracking with Jotform
-app.use(cors({
-  origin: true,
-  credentials: true
-}));
-app.use(cookieParser());
-
-// Initialize the QuickBooks Client using standard system environment flags
+// Initialize the QuickBooks Client using standard system environment variables
 const oauthClient = new OAuthClient({
   clientId: process.env.QBO_CLIENT_ID,
   clientSecret: process.env.QBO_CLIENT_SECRET,
   environment: 'sandbox', 
-  redirectUri: process.env.QBO_REDIRECT_URI
+  redirectUri: process.env.QBO_REDIRECT_URI || 'https://onrender.com'
 });
 
-// ROUTE 1: Explicit Handshake Entry Point
+// Memory cache block to preserve token data while your server stays awake
+let sessionTokenStore = null;
+
+// ROUTE 1: Explicit Login Entry Point
 app.get('/login', (req, res) => {
   try {
     const authUri = oauthClient.authorizeUri({
@@ -37,31 +33,23 @@ app.get('/login', (req, res) => {
 // ROUTE 2: Callback Processor
 app.get('/callback', async (req, res) => {
   try {
-    // Construct the verified absolute target path URL explicitly for proxy layers
+    // Construct the absolute proxy target path URL explicitly
     const completeTargetUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
     
-    // Swap code flags for active access properties
+    // Trade authentication code flags for an active token payload
     const authResponse = await oauthClient.createToken(completeTargetUrl);
-    
-    // 💡 THE PERSISTENCE FIX: Bake the raw token object into a browser cookie that survives server sleep states
-    const tokenJson = JSON.stringify(authResponse.token);
-    res.cookie('qbo_token_cookie', tokenJson, { 
-      httpOnly: true, 
-      secure: true, 
-      sameSite: 'none',
-      maxAge: 365 * 24 * 60 * 60 * 1000 // Valid for 1 year
-    });
+    sessionTokenStore = authResponse.getJson();
     
     return res.send(`
       <html>
         <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 100px; background-color: #f7f9fc;">
           <div style="display: inline-block; padding: 40px; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); max-width: 500px;">
             <h2 style="color: #2ecc71; margin-bottom: 10px;">✅ Connection Established!</h2>
-            <p style="color: #555; line-height: 1.5;">Your <strong>CustomerNames</strong> integration app has completed authentication with your QuickBooks Sandbox organization.</p>
+            <p style="color: #555; line-height: 1.5;">Your <strong>CustomerNames</strong> app is authenticated.</p>
             <div style="background: #f1f2f6; padding: 12px; border-radius: 4px; font-weight: bold; margin: 20px 0; color: #333;">
-              Session State: PERSISTENT COOKIE 🟢
+              Data Sync: ENVIRONMENT KEYS ACTIVE 🟢
             </div>
-            <p style="font-size: 14px; color: #888;">You can now close this tab and proceed directly to your Jotform configuration.</p>
+            <p style="font-size: 14px; color: #888;">You can now close this tab and look at your Jotform fields.</p>
           </div>
         </body>
       </html>
@@ -74,17 +62,18 @@ app.get('/callback', async (req, res) => {
 // ROUTE 3: Jotform Fetch API Pipeline
 app.get('/api/customers', async (req, res) => {
   try {
-    const rawCookie = req.cookies.qbo_token_cookie;
-    if (!rawCookie) {
+    if (sessionTokenStore) {
+      oauthClient.setToken(sessionTokenStore);
+    }
+
+    const token = oauthClient.getToken();
+    if (!token || !token.access_token) {
       return res.status(401).json({ error: "Access token unauthenticated. Run /login setup loop first." });
     }
 
-    // Force-inject saved session cookies back into client library memory dynamically per request
-    const parsedToken = JSON.parse(rawCookie);
-    oauthClient.setToken(parsedToken);
-
-    const token = oauthClient.getToken();
     const companyId = token.realmId;
+    
+    // 💡 THE HARD MATCH FIX: Direct, explicitly formatted QuickBooks sandbox endpoint URL
     const queryUrl = `https://intuit.com{companyId}/query?query=select * from Customer&minorversion=65`;
 
     let response = await fetch(queryUrl, {
@@ -95,20 +84,17 @@ app.get('/api/customers', async (req, res) => {
       }
     });
 
-    // Handle token rotation transparently if the session flags expire natively (401 Unauthorized)
+    // Handle token rotation transparently if the session flags expire natively
     if (response.status === 401) {
       console.log("Token expired. Initiating automatic refresh...");
       const refreshResponse = await oauthClient.refresh();
-      
-      // Update cookie data with the fresh access token values
-      res.cookie('qbo_token_cookie', JSON.stringify(refreshResponse.token), { 
-        httpOnly: true, secure: true, sameSite: 'none', maxAge: 365 * 24 * 60 * 60 * 1000 
-      });
+      sessionTokenStore = refreshResponse.getJson();
+      oauthClient.setToken(sessionTokenStore);
       
       response = await fetch(queryUrl, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${refreshResponse.token.access_token}`,
+          'Authorization': `Bearer ${sessionTokenStore.access_token}`,
           'Accept': 'application/json'
         }
       });
@@ -128,7 +114,7 @@ app.get('/api/customers', async (req, res) => {
   }
 });
 
-// ROUTE 4: Core Server Homepage Entry
+// ROUTE 4: Core Landing Homepage Entry
 app.get('/', (req, res) => {
   res.send(`
     <html>
