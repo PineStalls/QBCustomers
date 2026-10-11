@@ -72,8 +72,9 @@ app.get('/api/customers', async (req, res) => {
 
     const companyId = token.realmId;
     
-    // 💡 FIX: Replaced broken URL placeholder with the absolute official QuickBooks Sandbox API string
-    const url = `https://intuit.com{companyId}/query?query=select * from Customer&minorversion=65`;
+    // 💡 CORRECT URL: Replace line 61 with this absolute path:
+const url = `https://sandbox-quickbooks.api.intuit.com/v3/company/${companyId}/query?query=select * from Customer&minorversion=65`;
+
 
     let response = await fetch(url, {
       method: 'GET',
