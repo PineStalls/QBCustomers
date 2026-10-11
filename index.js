@@ -7,11 +7,10 @@ const app = express();
 app.use(cors()); 
 
 // 👈 MANUALLY ENTER YOUR INTUIT DEVELOPER KEYS INSIDE THESE QUOTES
-const CLIENT_ID = 'ABEYdP6kacVC3MUK1LaKJPCsJrP5ugRLdVChCBw7hZaF7PMvsc';
-const CLIENT_SECRET = 'DYcTb6eb5MY175qqVFc6Bo2aXzEZpQWzz70ZoyO0';
-const REDIRECT_URI = 'https://qbcustomers.onrender.com';
+const CLIENT_ID = 'PASTE_YOUR_DEVELOPMENT_CLIENT_ID_HERE';
+const CLIENT_SECRET = 'PASTE_YOUR_DEVELOPMENT_CLIENT_SECRET_HERE';
+const REDIRECT_URI = 'https://onrender.com';
 
-// Intuit SDK client initialization
 const oauthClient = new OAuthClient({
   clientId: CLIENT_ID,
   clientSecret: CLIENT_SECRET,
@@ -19,7 +18,6 @@ const oauthClient = new OAuthClient({
   redirectUri: REDIRECT_URI,
 });
 
-// A fallback string to keep the system active if the global process resets
 let backupTokenString = "";
 
 app.get('/login', (req, res) => {
@@ -34,38 +32,43 @@ app.get('/login', (req, res) => {
   }
 });
 
-// ROUTE 2: Callback Handler
+// ROUTE 2: Corrected Callback Handler using an Absolute URL Construction Loop
 app.get('/callback', async (req, res) => {
   try {
-    // Exchange authorization code for token response payload
-    const authResponse = await oauthClient.createToken(req.url);
+    console.log("QuickBooks forwarded request back to /callback. Constructing absolute request payload...");
+    
+    // FIX: Render passes proxy routing rules, requiring us to explicitly craft the absolute string URL target
+    const absoluteFullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+    console.log("Absolute validation URL generated successfully: ", absoluteFullUrl);
+
+    // Swap the reconstructed absolute path parameter for active live session flags
+    const authResponse = await oauthClient.createToken(absoluteFullUrl);
     const rawJson = authResponse.getJson();
     
-    // Save token state strings explicitly
     backupTokenString = JSON.stringify(rawJson);
     global.qboSessionToken = rawJson;
     
-    // Explicit HTML success layout page to prevent immediate redirect looping
+    console.log("Tokens stored cleanly in global memory states.");
+
     return res.send(`
       <html>
         <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 100px; background-color: #eef2f7;">
           <div style="display: inline-block; padding: 40px; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
             <h2 style="color: #27ae60;">🚀 Handshake Successful!</h2>
             <p style="color: #555;">Your 'CustomerNames' App is linked securely to QuickBooks Online.</p>
-            <p style="font-weight: bold; color: #333;">You can now safely close this window and open your Jotform.</p>
+            <p style="font-weight: bold; color: #333;">You can now safely close this window and test your Jotform.</p>
           </div>
         </body>
       </html>
     `);
   } catch (e) {
-    return res.status(500).send(`Authentication error: ${e.message}`);
+    console.error("CRITICAL SWAP CRASH DETECTED: ", e.message);
+    return res.status(500).send(`Authentication token replacement crash: ${e.message}`);
   }
 });
 
-// ROUTE 3: Dropdown Population Data Pipeline for Jotform
 app.get('/api/customers', async (req, res) => {
   try {
-    // If runtime memory is dropped, rebuild state from string storage instantly
     if (!global.qboSessionToken && backupTokenString) {
       global.qboSessionToken = JSON.parse(backupTokenString);
     }
@@ -80,8 +83,6 @@ app.get('/api/customers', async (req, res) => {
     }
 
     const companyId = token.realmId;
-    
-    // The explicit QuickBooks Online API query path
     const url = `https://intuit.com{companyId}/query?query=select * from Customer&minorversion=65`;
 
     let response = await fetch(url, {
@@ -92,7 +93,6 @@ app.get('/api/customers', async (req, res) => {
       }
     });
 
-    // Handle token updates automatically if token expires (401 error)
     if (response.status === 401) {
       const refreshResponse = await oauthClient.refresh();
       const freshJson = refreshResponse.getJson();
@@ -124,7 +124,6 @@ app.get('/api/customers', async (req, res) => {
   }
 });
 
-// ROUTE 4: Standard Base Landing Screen
 app.get('/', (req, res) => {
   res.send(`
     <html>
