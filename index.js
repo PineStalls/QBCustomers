@@ -1,102 +1,44 @@
-require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
-const cors = require('cors');
-
 const app = express();
-app.use(cors()); // Jotform needs this
-app.use(express.json());
 
-const {
-  QB_CLIENT_ID,
-  QB_CLIENT_SECRET,
-  QB_REFRESH_TOKEN,
-  QB_REALM_ID,
-  QB_ENVIRONMENT = 'sandbox', // or 'sandbox'
-  API_SECRET          // optional simple protection key
-} = process.env;
+// Mock values - in production, fetch these securely from your DB or token manager
+const QBO_ACCESS_TOKEN = "eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2IiwieC5vcmciOiJIMCJ9..ekV1VlLpXfYFjjqZJRDs8Q.w9SN_Q0Hj4QXQvd_QLmKgN1MaZGShXgLsiDaGSqwq8meR5PZTeVlH6ajf-HIzwg6l7CxxzpHfq0qzufdVCR_LQGlC0cba8C1Uc4uDXqPVBr3DD3dt8FVHdGuvYafbeg5RFklttudGsFtp634EbEPXg68ppL8Ej3wNyPOy7ANY6WmsaUeC-fjRU7fCvfwDL_tK59m73_Gdp-J1XSe_h6D4s17qYxcyDfzP7kQ_-3_Anrd3ZrJbZtMXGyT06Kw6LC4H1AZwfEKsf97uM4gcgNKuQJNwb1lpd6PY9TzhNU-f0nIWxufbMUzCTvXOJLrwpHPsO2z-ojnbTBPqasEiGnJmQYdrwS8kNhZ4CcRkSX1tBCGR5aE7EI1BXeoZzGikCdKqe4Mw_E7ZtoCa4Pkqv9n4w3oO-vyO29DE4mmD8YDVXzIt3ithhu59gEKdk0gcy5-LAHNBYN2ejUmDXOIYe9_dm5dqr3n0uEEo5WTS4mZDn8.zoC562bF7H47MkP5GPGnyQ"; 
+const QBO_COMPANY_ID = "9341453660821839"; 
 
-const TOKEN_URL = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
-const BASE_URL = QB_ENVIRONMENT === 'sandbox'
-  ? 'https://sandbox-quickbooks.api.intuit.com'
-  : 'https://quickbooks.api.intuit.com';
+app.get('/api/jotform-customers', async (req, res) => {
+    try {
+        // QuickBooks Online data Query for Active Customers
+        const query = "SELECT DisplayName, Id FROM Customer WHERE Active = true MAXRESULTS 500";
+        
+        const response = await axios({
+            method: 'get',
+            url: `https://intuit.com{QBO_COMPANY_ID}/query?query=${encodeURIComponent(query)}`,
+            headers: {
+                'Authorization': `Bearer ${QBO_ACCESS_TOKEN}`,
+                'Accept': 'application/json',
+                'Content-Type': 'text/plain'
+            }
+        });
 
-let cachedAccessToken = null;
-let tokenExpiresAt = 0;
+        // Safe extraction of customers array
+        const qboCustomers = response.data.QueryResponse.Customer || [];
 
-async function getAccessToken() {
-  if (cachedAccessToken && Date.now() < tokenExpiresAt - 60000) {
-    return cachedAccessToken;
-  }
+        // Jotform expects an array of objects containing a 'label' and 'value'
+        const formattedData = qboCustomers.map(customer => ({
+            label: customer.DisplayName, // What the user sees in the dropdown
+            value: customer.Id           // The backend ID attached to the submission
+        }));
 
-  const auth = Buffer.from(`${QB_CLIENT_ID}:${QB_CLIENT_SECRET}`).toString('base64');
+        // Respond back to Jotform's Remote Data Dropdown
+        res.setHeader('Access-Control-Allow-Origin', '*'); // Essential for CORS bypass
+        res.json(formattedData);
 
-  const { data } = await axios.post(
-    TOKEN_URL,
-    new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: QB_REFRESH_TOKEN
-    }),
-    {
-      headers: {
-        Authorization: `Basic ${auth}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Accept: 'application/json'
-      }
+    } catch (error) {
+        console.error('Error fetching from QuickBooks:', error.message);
+        res.status(500).json({ error: 'Failed to retrieve QuickBooks customers.' });
     }
-  );
-
-  // IMPORTANT: Intuit rotates the refresh token
-  if (data.refresh_token) {
-    console.log('New refresh token received – update your Render env var!');
-    // In production you should persist the new refresh_token
-  }
-
-  cachedAccessToken = data.access_token;
-  tokenExpiresAt = Date.now() + (data.expires_in * 1000);
-  return cachedAccessToken;
-}
-
-app.get('/customers', async (req, res) => {
-  try {
-    // Optional simple protection
-    if (API_SECRET && req.headers.authorization !== `Bearer ${API_SECRET}`) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const accessToken = await getAccessToken();
-
-    // Query active customers (adjust MAXRESULTS as needed)
-    const query = encodeURIComponent(
-      `SELECT Id, DisplayName, CompanyName, PrimaryEmailAddr FROM Customer WHERE Active = true MAXRESULTS 1000`
-    );
-
-    const { data } = await axios.get(
-      `${BASE_URL}/v3/company/${QB_REALM_ID}/query?query=${query}&minorversion=75`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: 'application/json'
-        }
-      }
-    );
-
-    const customers = data.QueryResponse?.Customer || [];
-
-    // Format expected by Jotform Remote Data Dropdown
-    const options = customers.map(c => ({
-      id: c.Id,
-      name: c.DisplayName || c.CompanyName || 'Unnamed',
-      // you can add more fields if needed
-      email: c.PrimaryEmailAddr?.Address || ''
-    }));
-
-    res.json(options);
-  } catch (err) {
-    console.error(err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to fetch customers' });
-  }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Listening on ${PORT}`));
+app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
