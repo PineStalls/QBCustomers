@@ -2,15 +2,18 @@ const express = require('express');
 const OAuthClient = require('intuit-oauth');
 const fetch = require('node-fetch');
 const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
+const cookieParser = require('cookie-parser');
 
 const app = express();
-app.use(cors());
 
-// Target file system cache path to shield the token from spin-down memory wipes
-const CACHE_PATH = path.join(__dirname, 'token_cache.json');
+// 💡 CRITICAL FIX: CORS must be configured explicitly to allow credential tracking with Jotform
+app.use(cors({
+  origin: true,
+  credentials: true
+}));
+app.use(cookieParser());
 
+// Initialize the QuickBooks Client using standard system environment flags
 const oauthClient = new OAuthClient({
   clientId: process.env.QBO_CLIENT_ID,
   clientSecret: process.env.QBO_CLIENT_SECRET,
@@ -18,33 +21,7 @@ const oauthClient = new OAuthClient({
   redirectUri: process.env.QBO_REDIRECT_URI
 });
 
-// Helper Function: Write Token payload to disk cache instantly
-function saveTokenToDisk(authResponse) {
-  try {
-    const rawJson = authResponse.getJson();
-    fs.writeFileSync(CACHE_PATH, JSON.stringify(rawJson, null, 2), 'utf8');
-    console.log("SUCCESS: Active token saved securely to disk cache.");
-  } catch (err) {
-    console.error("Failed caching token payload to disk:", err.message);
-  }
-}
-
-// Helper Function: Load Token payload from disk cache dynamically
-function loadTokenFromDisk() {
-  try {
-    if (fs.existsSync(CACHE_PATH)) {
-      const fileData = fs.readFileSync(CACHE_PATH, 'utf8');
-      const tokenJson = JSON.parse(fileData);
-      oauthClient.setToken(tokenJson); // Force-inject credentials back into SDK instance
-      console.log("SUCCESS: Recovered valid token from disk cache.");
-      return true;
-    }
-  } catch (err) {
-    console.error("Failed restoring token payload from disk cache:", err.message);
-  }
-  return false;
-}
-
+// ROUTE 1: Explicit Handshake Entry Point
 app.get('/login', (req, res) => {
   try {
     const authUri = oauthClient.authorizeUri({
@@ -57,24 +34,34 @@ app.get('/login', (req, res) => {
   }
 });
 
+// ROUTE 2: Callback Processor
 app.get('/callback', async (req, res) => {
   try {
+    // Construct the verified absolute target path URL explicitly for proxy layers
     const completeTargetUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+    
+    // Swap code flags for active access properties
     const authResponse = await oauthClient.createToken(completeTargetUrl);
     
-    // Save to file storage right away so token survives server sleep states
-    saveTokenToDisk(authResponse);
+    // 💡 THE PERSISTENCE FIX: Bake the raw token object into a browser cookie that survives server sleep states
+    const tokenJson = JSON.stringify(authResponse.token);
+    res.cookie('qbo_token_cookie', tokenJson, { 
+      httpOnly: true, 
+      secure: true, 
+      sameSite: 'none',
+      maxAge: 365 * 24 * 60 * 60 * 1000 // Valid for 1 year
+    });
     
     return res.send(`
       <html>
         <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 100px; background-color: #f7f9fc;">
           <div style="display: inline-block; padding: 40px; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); max-width: 500px;">
             <h2 style="color: #2ecc71; margin-bottom: 10px;">✅ Connection Established!</h2>
-            <p style="color: #555; line-height: 1.5;">Your <strong>CustomerNames</strong> app is authenticated.</p>
+            <p style="color: #555; line-height: 1.5;">Your <strong>CustomerNames</strong> integration app has completed authentication with your QuickBooks Sandbox organization.</p>
             <div style="background: #f1f2f6; padding: 12px; border-radius: 4px; font-weight: bold; margin: 20px 0; color: #333;">
-              Data Sync Store: PERSISTENT 🟢
+              Session State: PERSISTENT COOKIE 🟢
             </div>
-            <p style="font-size: 14px; color: #888;">You can now close this window and proceed to your Jotform setup.</p>
+            <p style="font-size: 14px; color: #888;">You can now close this tab and proceed directly to your Jotform configuration.</p>
           </div>
         </body>
       </html>
@@ -84,16 +71,19 @@ app.get('/callback', async (req, res) => {
   }
 });
 
+// ROUTE 3: Jotform Fetch API Pipeline
 app.get('/api/customers', async (req, res) => {
   try {
-    // Check local storage file if memory layer was reset during a server sleep
-    loadTokenFromDisk();
-
-    const token = oauthClient.getToken();
-    if (!token || !token.access_token) {
+    const rawCookie = req.cookies.qbo_token_cookie;
+    if (!rawCookie) {
       return res.status(401).json({ error: "Access token unauthenticated. Run /login setup loop first." });
     }
 
+    // Force-inject saved session cookies back into client library memory dynamically per request
+    const parsedToken = JSON.parse(rawCookie);
+    oauthClient.setToken(parsedToken);
+
+    const token = oauthClient.getToken();
     const companyId = token.realmId;
     const queryUrl = `https://intuit.com{companyId}/query?query=select * from Customer&minorversion=65`;
 
@@ -105,17 +95,20 @@ app.get('/api/customers', async (req, res) => {
       }
     });
 
-    // Handle token rotation transparently if the session flags expire natively
+    // Handle token rotation transparently if the session flags expire natively (401 Unauthorized)
     if (response.status === 401) {
       console.log("Token expired. Initiating automatic refresh...");
-      const refreshResponse = await oauthClient.refresh(); //
-      saveTokenToDisk(refreshResponse); // Save the freshly generated token to disk file
+      const refreshResponse = await oauthClient.refresh();
       
-      const newToken = oauthClient.getToken();
+      // Update cookie data with the fresh access token values
+      res.cookie('qbo_token_cookie', JSON.stringify(refreshResponse.token), { 
+        httpOnly: true, secure: true, sameSite: 'none', maxAge: 365 * 24 * 60 * 60 * 1000 
+      });
+      
       response = await fetch(queryUrl, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${newToken.access_token}`,
+          'Authorization': `Bearer ${refreshResponse.token.access_token}`,
           'Accept': 'application/json'
         }
       });
@@ -135,6 +128,7 @@ app.get('/api/customers', async (req, res) => {
   }
 });
 
+// ROUTE 4: Core Server Homepage Entry
 app.get('/', (req, res) => {
   res.send(`
     <html>
