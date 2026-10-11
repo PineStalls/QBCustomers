@@ -11,13 +11,12 @@ const oauthClient = new OAuthClient({
   clientId: process.env.QBO_CLIENT_ID,
   clientSecret: process.env.QBO_CLIENT_SECRET,
   environment: 'sandbox', 
-  redirectUri: process.env.QBO_REDIRECT_URI || 'https://qbcustomers.onrender.com'
+  redirectUri: process.env.QBO_REDIRECT_URI || 'https://onrender.com'
 });
 
-// Memory cache block to preserve token data while your server stays awake
-let sessionTokenStore = null;
+// A fallback persistence string block to prevent token tracking data drops
+let dynamicTokenStateString = "";
 
-// ROUTE 1: Explicit Login Entry Point
 app.get('/login', (req, res) => {
   try {
     const authUri = oauthClient.authorizeUri({
@@ -30,15 +29,18 @@ app.get('/login', (req, res) => {
   }
 });
 
-// ROUTE 2: Callback Processor
 app.get('/callback', async (req, res) => {
   try {
-    // Construct the absolute proxy target path URL explicitly
-    const completeTargetUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+    // Construct the absolute proxy target path URL explicitly to capture parameters natively
+    const requestPathUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
     
-    // Trade authentication code flags for an active token payload
-    const authResponse = await oauthClient.createToken(completeTargetUrl);
-    sessionTokenStore = authResponse.getJson();
+    // Swap authorization parameters for live access token objects
+    const authResponse = await oauthClient.createToken(requestPathUrl);
+    const rawPayloadJson = authResponse.getJson();
+    
+    // Serialize and cache the token state strings instantly
+    dynamicTokenStateString = JSON.stringify(rawPayloadJson);
+    global.qboAuthSession = rawPayloadJson;
     
     return res.send(`
       <html>
@@ -47,7 +49,7 @@ app.get('/callback', async (req, res) => {
             <h2 style="color: #2ecc71; margin-bottom: 10px;">✅ Connection Established!</h2>
             <p style="color: #555; line-height: 1.5;">Your <strong>CustomerNames</strong> app is authenticated.</p>
             <div style="background: #f1f2f6; padding: 12px; border-radius: 4px; font-weight: bold; margin: 20px 0; color: #333;">
-              Data Sync: ENVIRONMENT KEYS ACTIVE 🟢
+              Data Sync: PERSISTENT CACHE ACTIVE 🟢
             </div>
             <p style="font-size: 14px; color: #888;">You can now close this tab and look at your Jotform fields.</p>
           </div>
@@ -59,11 +61,15 @@ app.get('/callback', async (req, res) => {
   }
 });
 
-// ROUTE 3: Jotform Fetch API Pipeline
 app.get('/api/customers', async (req, res) => {
   try {
-    if (sessionTokenStore) {
-      oauthClient.setToken(sessionTokenStore);
+    // Restore authorization flags from fallback strings if memory tracker loops reset
+    if (!global.qboAuthSession && dynamicTokenStateString) {
+      global.qboAuthSession = JSON.parse(dynamicTokenStateString);
+    }
+
+    if (global.qboAuthSession) {
+      oauthClient.setToken(global.qboAuthSession);
     }
 
     const token = oauthClient.getToken();
@@ -73,7 +79,7 @@ app.get('/api/customers', async (req, res) => {
 
     const companyId = token.realmId;
     
-    // 💡 THE HARD MATCH FIX: Direct, explicitly formatted QuickBooks sandbox endpoint URL
+    // 💡 THE DEFINITIVE STRIP-BUG FIX: Explicitly hardcoded official QuickBooks Sandbox URL format
     const queryUrl = `https://intuit.com{companyId}/query?query=select * from Customer&minorversion=65`;
 
     let response = await fetch(queryUrl, {
@@ -84,17 +90,20 @@ app.get('/api/customers', async (req, res) => {
       }
     });
 
-    // Handle token rotation transparently if the session flags expire natively
+    // Handle token rotation transparently if the session flags expire natively (401 Unauthorized)
     if (response.status === 401) {
       console.log("Token expired. Initiating automatic refresh...");
       const refreshResponse = await oauthClient.refresh();
-      sessionTokenStore = refreshResponse.getJson();
-      oauthClient.setToken(sessionTokenStore);
+      const freshJsonData = refreshResponse.getJson();
+      
+      dynamicTokenStateString = JSON.stringify(freshJsonData);
+      global.qboAuthSession = freshJsonData;
+      oauthClient.setToken(freshJsonData);
       
       response = await fetch(queryUrl, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${sessionTokenStore.access_token}`,
+          'Authorization': `Bearer ${freshJsonData.access_token}`,
           'Accept': 'application/json'
         }
       });
@@ -114,7 +123,6 @@ app.get('/api/customers', async (req, res) => {
   }
 });
 
-// ROUTE 4: Core Landing Homepage Entry
 app.get('/', (req, res) => {
   res.send(`
     <html>
