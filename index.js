@@ -6,17 +6,18 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 
-// Initialize the QuickBooks Client using standard system environment variables
+// Memory cache block to preserve token data while your server stays awake
+let sessionTokenStore = null;
+
+// Initialize the QuickBooks Client dynamically using standard system environment variables
 const oauthClient = new OAuthClient({
   clientId: process.env.QBO_CLIENT_ID,
   clientSecret: process.env.QBO_CLIENT_SECRET,
   environment: 'sandbox', 
-  redirectUri: process.env.QBO_REDIRECT_URI || 'https://onrender.com'
+  redirectUri: process.env.QBO_REDIRECT_URI
 });
 
-// Global static storage object to handle background token rotations
-let sessionTokenStore = null;
-
+// ROUTE 1: Login Entry Point
 app.get('/login', (req, res) => {
   try {
     const authUri = oauthClient.authorizeUri({
@@ -29,22 +30,25 @@ app.get('/login', (req, res) => {
   }
 });
 
-// ROUTE 2: Callback Processor that generates an on-screen HTML Customer List
+// ROUTE 2: Callback Processor that generates the on-screen HTML Customer Table
 app.get('/callback', async (req, res) => {
   try {
+    // Dynamically captures your true host (qbcustomers.onrender.com) from the browser request headers
     const completeTargetUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+    
     const authResponse = await oauthClient.createToken(completeTargetUrl);
     sessionTokenStore = authResponse.getJson();
 
-    // Pull company info out of the token payload
     const companyId = sessionTokenStore.realmId;
-    const queryUrl = `https://intuit.com{companyId}/query?query=select * from Customer&minorversion=65`;
+    
+    // Explicitly constructed official QuickBooks Sandbox API query string endpoint
+    const queryUrl = 'https://intuit.com' + companyId + '/query?query=select * from Customer&minorversion=65';
 
     // Immediately fetch customer names from QuickBooks Online using the active session token
     const qboResponse = await fetch(queryUrl, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${sessionTokenStore.access_token}`,
+        'Authorization': 'Bearer ' + sessionTokenStore.access_token,
         'Accept': 'application/json'
       }
     });
@@ -113,12 +117,12 @@ app.get('/api/customers', async (req, res) => {
     }
 
     const companyId = token.realmId;
-    const queryUrl = `https://intuit.com{companyId}/query?query=select * from Customer&minorversion=65`;
+    const queryUrl = 'https://intuit.com' + companyId + '/query?query=select * from Customer&minorversion=65';
 
     let response = await fetch(queryUrl, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${token.access_token}`,
+        'Authorization': 'Bearer ' + token.access_token,
         'Accept': 'application/json'
       }
     });
