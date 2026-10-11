@@ -7,9 +7,9 @@ const app = express();
 app.use(cors()); 
 
 // 👈 MANUALLY ENTER YOUR INTUIT DEVELOPER KEYS INSIDE THESE QUOTES
-const CLIENT_ID = 'PASTE_YOUR_DEVELOPMENT_CLIENT_ID_HERE';
-const CLIENT_SECRET = 'PASTE_YOUR_DEVELOPMENT_CLIENT_SECRET_HERE';
-const REDIRECT_URI = 'https://onrender.com';
+const CLIENT_ID = 'ABEYdP6kacVC3MUK1LaKJPCsJrP5ugRLdVChCBw7hZaF7PMvsc';
+const CLIENT_SECRET = 'DYcTb6eb5MY175qqVFc6Bo2aXzEZpQWzz70ZoyO0';
+const REDIRECT_URI = 'https://qbcustomers.onrender.com';
 
 const oauthClient = new OAuthClient({
   clientId: CLIENT_ID,
