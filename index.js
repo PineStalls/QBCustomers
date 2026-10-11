@@ -1,171 +1,102 @@
+require('dotenv').config();
 const express = require('express');
-const OAuthClient = require('intuit-oauth');
-const fetch = require('node-fetch');
+const axios = require('axios');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
+app.use(cors()); // Jotform needs this
+app.use(express.json());
 
-// Global variable to keep the session token active in memory
-let globalQboSession = null;
+const {
+  QB_CLIENT_ID,
+  QB_CLIENT_SECRET,
+  QB_REFRESH_TOKEN,
+  QB_REALM_ID,
+  QB_ENVIRONMENT = 'production', // or 'sandbox'
+  API_SECRET          // optional simple protection key
+} = process.env;
 
-// ROUTE 1: Login Entry Point (Launches QuickBooks authorization window)
-app.get('/login', (req, res) => {
-  try {
-    // 💡 THE PROXY FIX: Force HTTPS explicitly instead of relying on req.protocol
-    const hostDomain = req.get('host');
-    const dynamicRedirectUri = 'https://' + hostDomain + '/callback';
-    
-    console.log("Initializing OAuthClient with secure redirect:", dynamicRedirectUri);
-    
-    const clientInstance = new OAuthClient({
-      clientId: process.env.QBO_CLIENT_ID,
-      clientSecret: process.env.QBO_CLIENT_SECRET,
-      environment: 'sandbox', 
-      redirectUri: dynamicRedirectUri
-    });
+const TOKEN_URL = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
+const BASE_URL = QB_ENVIRONMENT === 'sandbox'
+  ? 'https://sandbox-quickbooks.api.intuit.com'
+  : 'https://quickbooks.api.intuit.com';
 
-    const authUri = clientInstance.authorizeUri({
-      scope: [OAuthClient.scopes.Accounting],
-      state: 'customer-names-token-pipeline'
-    });
-    
-    return res.redirect(authUri);
-  } catch (error) {
-    return res.status(500).send(`Failed initializing auth link: ${error.message}`);
+let cachedAccessToken = null;
+let tokenExpiresAt = 0;
+
+async function getAccessToken() {
+  if (cachedAccessToken && Date.now() < tokenExpiresAt - 60000) {
+    return cachedAccessToken;
   }
-});
 
-// ROUTE 2: Callback Processor (Captures Token & Immedately Renders Customer Page)
-app.get('/callback', async (req, res) => {
-  try {
-    const hostDomain = req.get('host');
-    const dynamicRedirectUri = 'https://' + hostDomain + '/callback';
-    
-    // Reconstruct the absolute incoming request URL accurately using explicit HTTPS rules
-    const completeTargetUrl = 'https://' + hostDomain + req.originalUrl;
-    
-    const clientInstance = new OAuthClient({
-      clientId: process.env.QBO_CLIENT_ID,
-      clientSecret: process.env.QBO_CLIENT_SECRET,
-      environment: 'sandbox', 
-      redirectUri: dynamicRedirectUri
-    });
+  const auth = Buffer.from(`${QB_CLIENT_ID}:${QB_CLIENT_SECRET}`).toString('base64');
 
-    const authResponse = await clientInstance.createToken(completeTargetUrl);
-    globalQboSession = authResponse.getJson();
-
-    const companyId = globalQboSession.realmId;
-    
-    // 💡 THE HARD PATH FIX: Assembled cleanly to prevent filter stripping bugs
-    const apiEndpoint = 'https://' + '://intuit.com' + companyId + '/query?query=select * from Customer&minorversion=65';
-
-    const qboResponse = await fetch(apiEndpoint, {
-      method: 'GET',
+  const { data } = await axios.post(
+    TOKEN_URL,
+    new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: QB_REFRESH_TOKEN
+    }),
+    {
       headers: {
-        'Authorization': 'Bearer ' + globalQboSession.access_token,
-        'Accept': 'application/json'
+        Authorization: `Basic ${auth}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'application/json'
       }
-    });
+    }
+  );
 
-    const payload = await qboResponse.json();
-    const customers = payload.QueryResponse?.Customer || [];
-
-    const customerListHtml = customers.map(cust => `
-      <tr style="border-bottom: 1px solid #ddd;">
-        <td style="padding: 12px; font-weight: bold; color: #333;">${cust.Id}</td>
-        <td style="padding: 12px; color: #555;">${cust.DisplayName}</td>
-        <td style="padding: 12px; color: #777;">${cust.PrimaryEmailAddr?.Address || 'No Email Added'}</td>
-      </tr>
-    `).join('');
-
-    return res.send(`
-      <html>
-        <head><title>QuickBooks Live Customers</title></head>
-        <body style="font-family: Arial, sans-serif; background-color: #f4f6f9; padding: 40px; margin: 0;">
-          <div style="max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-            <div style="border-bottom: 2px solid #2b78c5; padding-bottom: 15px; margin-bottom: 20px;">
-              <h2 style="color: #333; margin: 0;">📋 Live QuickBooks Customer Base</h2>
-              <p style="color: #666; margin: 5px 0 0 0;">App Instance Target: <strong>CustomerNames</strong></p>
-            </div>
-            <table style="width: 100%; border-collapse: collapse; text-align: left;">
-              <thead>
-                <tr style="background-color: #f8f9fa; border-bottom: 2px solid #dee2e6;">
-                  <th style="padding: 12px; color: #495057;">ID</th>
-                  <th style="padding: 12px; color: #495057;">Customer Name</th>
-                  <th style="padding: 12px; color: #495057;">Email Address</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${customerListHtml.length > 0 ? customerListHtml : '<tr><td colspan="3" style="padding: 20px; text-align: center; color: #999;">No customers found inside your Sandbox workspace.</td></tr>'}
-              </tbody>
-            </table>
-          </div>
-        </body>
-      </html>
-    `);
-  } catch (e) {
-    return res.status(500).send(`Callback token processing failed: ${e.message}`);
+  // IMPORTANT: Intuit rotates the refresh token
+  if (data.refresh_token) {
+    console.log('New refresh token received – update your Render env var!');
+    // In production you should persist the new refresh_token
   }
-});
 
-// ROUTE 3: JSON Endpoint for Jotform Drops
-app.get('/api/customers', async (req, res) => {
+  cachedAccessToken = data.access_token;
+  tokenExpiresAt = Date.now() + (data.expires_in * 1000);
+  return cachedAccessToken;
+}
+
+app.get('/customers', async (req, res) => {
   try {
-    if (!globalQboSession) {
-      return res.status(401).json({ error: "Access token unauthenticated. Run /login setup loop first." });
+    // Optional simple protection
+    if (API_SECRET && req.headers.authorization !== `Bearer ${API_SECRET}`) {
+      return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const hostDomain = req.get('host');
-    const dynamicRedirectUri = 'https://' + hostDomain + '/callback';
-    
-    const clientInstance = new OAuthClient({
-      clientId: process.env.QBO_CLIENT_ID,
-      clientSecret: process.env.QBO_CLIENT_SECRET,
-      environment: 'sandbox', 
-      redirectUri: dynamicRedirectUri
-    });
+    const accessToken = await getAccessToken();
 
-    clientInstance.setToken(globalQboSession);
-    const companyId = globalQboSession.realmId;
-    const apiEndpoint = 'https://' + '://intuit.com' + companyId + '/query?query=select * from Customer&minorversion=65';
+    // Query active customers (adjust MAXRESULTS as needed)
+    const query = encodeURIComponent(
+      `SELECT Id, DisplayName, CompanyName, PrimaryEmailAddr FROM Customer WHERE Active = true MAXRESULTS 1000`
+    );
 
-    const response = await fetch(apiEndpoint, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${globalQboSession.access_token}`,
-        'Accept': 'application/json'
+    const { data } = await axios.get(
+      `${BASE_URL}/v3/company/${QB_REALM_ID}/query?query=${query}&minorversion=75`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/json'
+        }
       }
-    });
+    );
 
-    const payload = await response.json();
-    const customers = payload.QueryResponse?.Customer || [];
+    const customers = data.QueryResponse?.Customer || [];
 
-    const cleanDropdownArray = customers.map(cust => ({
-      value: cust.Id,
-      text: cust.DisplayName
+    // Format expected by Jotform Remote Data Dropdown
+    const options = customers.map(c => ({
+      id: c.Id,
+      name: c.DisplayName || c.CompanyName || 'Unnamed',
+      // you can add more fields if needed
+      email: c.PrimaryEmailAddr?.Address || ''
     }));
 
-    return res.json(cleanDropdownArray);
-  } catch (error) {
-    return res.status(500).json({ error: error.message });
+    res.json(options);
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to fetch customers' });
   }
-});
-
-// ROUTE 4: Core Landing Homepage View
-app.get('/', (req, res) => {
-  res.send(`
-    <html>
-      <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 100px; background-color: #f4f6f9;">
-        <div style="display: inline-block; padding: 40px; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
-          <h2>QuickBooks Online Middleware Platform</h2>
-          <p style="color: #666; margin-bottom: 25px;">App Instance Identity: <strong>CustomerNames</strong></p>
-          <a href="/login" style="display: inline-block; padding: 12px 24px; background-color: #2b78c5; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 16px;">👉 Click Here to Connect QuickBooks</a>
-        </div>
-      </body>
-    </html>
-  `);
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server executing live on port ${PORT}`));
+app.listen(PORT, () => console.log(`Listening on ${PORT}`));
