@@ -6,11 +6,12 @@ const cors = require('cors');
 const app = express();
 app.use(cors()); 
 
-// 👈 MANUALLY PASTE YOUR COPIED INTUIT DEVELOPER KEYS INSIDE THESE QUOTES
+// 👈 MANUALLY ENTER YOUR INTUIT DEVELOPER KEYS INSIDE THESE QUOTES
 const CLIENT_ID = 'ABEYdP6kacVC3MUK1LaKJPCsJrP5ugRLdVChCBw7hZaF7PMvsc';
-const CLIENT_SECRET = 'Dbx28Y4D24Fb1MNMn0lFGWiordzShH5Wy4Vb1eME';
+const CLIENT_SECRET = 'DYcTb6eb5MY175qqVFc6Bo2aXzEZpQWzz70ZoyO0';
 const REDIRECT_URI = 'https://qbcustomers.onrender.com';
 
+// Intuit SDK client initialization
 const oauthClient = new OAuthClient({
   clientId: CLIENT_ID,
   clientSecret: CLIENT_SECRET,
@@ -18,12 +19,11 @@ const oauthClient = new OAuthClient({
   redirectUri: REDIRECT_URI,
 });
 
-// Global static storage object to prevent Render free-tier file system wipes
-global.qboSessionToken = null;
+// A fallback string to keep the system active if the global process resets
+let backupTokenString = "";
 
 app.get('/login', (req, res) => {
   try {
-    console.log("Processing /login request...");
     const authUri = oauthClient.authorizeUri({
       scope: [OAuthClient.scopes.Accounting], 
       state: 'intuit-test',
@@ -34,32 +34,54 @@ app.get('/login', (req, res) => {
   }
 });
 
+// ROUTE 2: Callback Handler
 app.get('/callback', async (req, res) => {
   try {
+    // Exchange authorization code for token response payload
     const authResponse = await oauthClient.createToken(req.url);
-    // Secure the raw json string into a global application configuration scope
-    global.qboSessionToken = authResponse.getJson();
-    console.log("SUCCESS: Global session memory locked.");
-    return res.send('Successfully authenticated with QuickBooks! You can now close this tab and look at Jotform.');
+    const rawJson = authResponse.getJson();
+    
+    // Save token state strings explicitly
+    backupTokenString = JSON.stringify(rawJson);
+    global.qboSessionToken = rawJson;
+    
+    // Explicit HTML success layout page to prevent immediate redirect looping
+    return res.send(`
+      <html>
+        <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 100px; background-color: #eef2f7;">
+          <div style="display: inline-block; padding: 40px; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+            <h2 style="color: #27ae60;">🚀 Handshake Successful!</h2>
+            <p style="color: #555;">Your 'CustomerNames' App is linked securely to QuickBooks Online.</p>
+            <p style="font-weight: bold; color: #333;">You can now safely close this window and open your Jotform.</p>
+          </div>
+        </body>
+      </html>
+    `);
   } catch (e) {
     return res.status(500).send(`Authentication error: ${e.message}`);
   }
 });
 
+// ROUTE 3: Dropdown Population Data Pipeline for Jotform
 app.get('/api/customers', async (req, res) => {
   try {
-    // Restore the session from global configuration if runtime tracking loops reset
+    // If runtime memory is dropped, rebuild state from string storage instantly
+    if (!global.qboSessionToken && backupTokenString) {
+      global.qboSessionToken = JSON.parse(backupTokenString);
+    }
+
     if (global.qboSessionToken) {
       oauthClient.setToken(global.qboSessionToken);
     }
 
     const token = oauthClient.getToken();
     if (!token || !token.access_token) {
-      return res.status(401).json({ error: "Not authenticated. Please click the home page button first." });
+      return res.status(401).json({ error: "Not authenticated. Please visit /login first to establish token pipelines." });
     }
 
     const companyId = token.realmId;
-    // Cleared structural string placeholder bugs from previous iterations
+    
+    // The explicit QuickBooks Online API query path
     const url = `https://intuit.com{companyId}/query?query=select * from Customer&minorversion=65`;
 
     let response = await fetch(url, {
@@ -70,17 +92,19 @@ app.get('/api/customers', async (req, res) => {
       }
     });
 
-    // Handle token refresh logic natively if 401 token expiration occurs
+    // Handle token updates automatically if token expires (401 error)
     if (response.status === 401) {
-      console.log("Token expired. Refreshing session flags...");
       const refreshResponse = await oauthClient.refresh();
-      global.qboSessionToken = refreshResponse.getJson();
+      const freshJson = refreshResponse.getJson();
       
-      const newToken = oauthClient.getToken();
+      backupTokenString = JSON.stringify(freshJson);
+      global.qboSessionToken = freshJson;
+      oauthClient.setToken(freshJson);
+      
       response = await fetch(url, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${newToken.access_token}`,
+          'Authorization': `Bearer ${freshJson.access_token}`,
           'Accept': 'application/json',
         }
       });
@@ -100,13 +124,14 @@ app.get('/api/customers', async (req, res) => {
   }
 });
 
+// ROUTE 4: Standard Base Landing Screen
 app.get('/', (req, res) => {
   res.send(`
     <html>
       <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 100px; background-color: #f4f6f9;">
         <div style="display: inline-block; padding: 40px; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
           <h2>QuickBooks Online Middleware Platform</h2>
-          <p style="color: #666; margin-bottom: 25px;">Click the button below to complete your one-time authentication layer:</p>
+          <p style="color: #666; margin-bottom: 25px;">App Instance Identity: <strong>CustomerNames</strong></p>
           <a href="/login" style="display: inline-block; padding: 12px 24px; background-color: #2b78c5; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 16px;">👉 Click Here to Connect QuickBooks</a>
         </div>
       </body>
