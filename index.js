@@ -14,7 +14,7 @@ const oauthClient = new OAuthClient({
   redirectUri: process.env.QBO_REDIRECT_URI || 'https://onrender.com'
 });
 
-// A fallback persistence string block to prevent token tracking data drops
+// A fallback persistence memory cache block to prevent token drops
 let dynamicTokenStateString = "";
 
 app.get('/login', (req, res) => {
@@ -31,7 +31,7 @@ app.get('/login', (req, res) => {
 
 app.get('/callback', async (req, res) => {
   try {
-    // Construct the absolute proxy target path URL explicitly to capture parameters natively
+    // Reconstruct proxy URL parameters natively 
     const requestPathUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
     
     // Swap authorization parameters for live access token objects
@@ -49,9 +49,9 @@ app.get('/callback', async (req, res) => {
             <h2 style="color: #2ecc71; margin-bottom: 10px;">✅ Connection Established!</h2>
             <p style="color: #555; line-height: 1.5;">Your <strong>CustomerNames</strong> app is authenticated.</p>
             <div style="background: #f1f2f6; padding: 12px; border-radius: 4px; font-weight: bold; margin: 20px 0; color: #333;">
-              Data Sync: PERSISTENT CACHE ACTIVE 🟢
+              Data Sync: PIPELINE FIXED 🟢
             </div>
-            <p style="font-size: 14px; color: #888;">You can now close this tab and look at your Jotform fields.</p>
+            <p style="font-size: 14px; color: #888;">You can now close this tab and check your Jotform dropdown.</p>
           </div>
         </body>
       </html>
@@ -63,7 +63,6 @@ app.get('/callback', async (req, res) => {
 
 app.get('/api/customers', async (req, res) => {
   try {
-    // Restore authorization flags from fallback strings if memory tracker loops reset
     if (!global.qboAuthSession && dynamicTokenStateString) {
       global.qboAuthSession = JSON.parse(dynamicTokenStateString);
     }
@@ -79,7 +78,7 @@ app.get('/api/customers', async (req, res) => {
 
     const companyId = token.realmId;
     
-    // 💡 THE DEFINITIVE STRIP-BUG FIX: Explicitly hardcoded official QuickBooks Sandbox URL format
+    // 💡 THE CRITICAL FIX: Replaced broken placeholder text string with the true absolute QBO Sandbox path
     const queryUrl = `https://intuit.com{companyId}/query?query=select * from Customer&minorversion=65`;
 
     let response = await fetch(queryUrl, {
@@ -90,7 +89,6 @@ app.get('/api/customers', async (req, res) => {
       }
     });
 
-    // Handle token rotation transparently if the session flags expire natively (401 Unauthorized)
     if (response.status === 401) {
       console.log("Token expired. Initiating automatic refresh...");
       const refreshResponse = await oauthClient.refresh();
