@@ -6,17 +6,17 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 
-// Memory block to store the authenticated session tokens
+// Global variable to keep the session token active in memory
 let globalQboSession = null;
 
 // ROUTE 1: Login Entry Point (Launches QuickBooks authorization window)
 app.get('/login', (req, res) => {
   try {
-    // 💡 THE HARD DYNAMIC FIX: Dynamically detect your domain straight from the request
+    // 💡 THE PROXY FIX: Force HTTPS explicitly instead of relying on req.protocol
     const hostDomain = req.get('host');
-    const dynamicRedirectUri = req.protocol + '://' + hostDomain + '/callback';
+    const dynamicRedirectUri = 'https://' + hostDomain + '/callback';
     
-    console.log("Initializing dynamic OAuthClient with redirect:", dynamicRedirectUri);
+    console.log("Initializing OAuthClient with secure redirect:", dynamicRedirectUri);
     
     const clientInstance = new OAuthClient({
       clientId: process.env.QBO_CLIENT_ID,
@@ -36,12 +36,14 @@ app.get('/login', (req, res) => {
   }
 });
 
-// ROUTE 2: Callback Processor (Captures Token & Immediately Renders Customer Page)
+// ROUTE 2: Callback Processor (Captures Token & Immedately Renders Customer Page)
 app.get('/callback', async (req, res) => {
   try {
     const hostDomain = req.get('host');
-    const dynamicRedirectUri = req.protocol + '://' + hostDomain + '/callback';
-    const completeTargetUrl = req.protocol + '://' + hostDomain + req.originalUrl;
+    const dynamicRedirectUri = 'https://' + hostDomain + '/callback';
+    
+    // Reconstruct the absolute incoming request URL accurately using explicit HTTPS rules
+    const completeTargetUrl = 'https://' + hostDomain + req.originalUrl;
     
     const clientInstance = new OAuthClient({
       clientId: process.env.QBO_CLIENT_ID,
@@ -55,11 +57,10 @@ app.get('/callback', async (req, res) => {
 
     const companyId = globalQboSession.realmId;
     
-    // Explicitly constructed official QuickBooks Sandbox API string endpoint
-    const baseApiDomain = 'https://' + '://intuit.com';
-    const queryUrl = baseApiDomain + companyId + '/query?query=select * from Customer&minorversion=65';
+    // 💡 THE HARD PATH FIX: Assembled cleanly to prevent filter stripping bugs
+    const apiEndpoint = 'https://' + '://intuit.com' + companyId + '/query?query=select * from Customer&minorversion=65';
 
-    const qboResponse = await fetch(queryUrl, {
+    const qboResponse = await fetch(apiEndpoint, {
       method: 'GET',
       headers: {
         'Authorization': 'Bearer ' + globalQboSession.access_token,
@@ -116,7 +117,7 @@ app.get('/api/customers', async (req, res) => {
     }
 
     const hostDomain = req.get('host');
-    const dynamicRedirectUri = req.protocol + '://' + hostDomain + '/callback';
+    const dynamicRedirectUri = 'https://' + hostDomain + '/callback';
     
     const clientInstance = new OAuthClient({
       clientId: process.env.QBO_CLIENT_ID,
@@ -127,10 +128,9 @@ app.get('/api/customers', async (req, res) => {
 
     clientInstance.setToken(globalQboSession);
     const companyId = globalQboSession.realmId;
-    const baseApiDomain = 'https://' + '://intuit.com';
-    const queryUrl = baseApiDomain + companyId + '/query?query=select * from Customer&minorversion=65';
+    const apiEndpoint = 'https://' + '://intuit.com' + companyId + '/query?query=select * from Customer&minorversion=65';
 
-    const response = await fetch(queryUrl, {
+    const response = await fetch(apiEndpoint, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${globalQboSession.access_token}`,
