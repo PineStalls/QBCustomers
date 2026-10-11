@@ -6,51 +6,63 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 
-// Initialize the QuickBooks Client dynamically using standard system environment variables
-const oauthClient = new OAuthClient({
-  clientId: process.env.QBO_CLIENT_ID,
-  clientSecret: process.env.QBO_CLIENT_SECRET,
-  environment: 'sandbox', 
-  redirectUri: process.env.QBO_REDIRECT_URI
-});
+// Memory block to store the authenticated session tokens
+let globalQboSession = null;
 
-// Structural global persistence container block to preserve the token in memory
-global.activeQboSession = null;
-
-// ROUTE 1: Explicit Handshake Entry Point (Launches QuickBooks Login Screen)
+// ROUTE 1: Login Entry Point (Launches QuickBooks authorization window)
 app.get('/login', (req, res) => {
   try {
-    const authUri = oauthClient.authorizeUri({
+    // 💡 THE HARD DYNAMIC FIX: Dynamically detect your domain straight from the request
+    const hostDomain = req.get('host');
+    const dynamicRedirectUri = req.protocol + '://' + hostDomain + '/callback';
+    
+    console.log("Initializing dynamic OAuthClient with redirect:", dynamicRedirectUri);
+    
+    const clientInstance = new OAuthClient({
+      clientId: process.env.QBO_CLIENT_ID,
+      clientSecret: process.env.QBO_CLIENT_SECRET,
+      environment: 'sandbox', 
+      redirectUri: dynamicRedirectUri
+    });
+
+    const authUri = clientInstance.authorizeUri({
       scope: [OAuthClient.scopes.Accounting],
       state: 'customer-names-token-pipeline'
     });
+    
     return res.redirect(authUri);
   } catch (error) {
     return res.status(500).send(`Failed initializing auth link: ${error.message}`);
   }
 });
 
-// ROUTE 2: Callback Processor (Captures Token & Instantly Displays Customers Webpage)
+// ROUTE 2: Callback Processor (Captures Token & Immediately Renders Customer Page)
 app.get('/callback', async (req, res) => {
   try {
-    // Reconstruct proxy URL parameters natively to handle absolute validation loops
-    const requestPathUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+    const hostDomain = req.get('host');
+    const dynamicRedirectUri = req.protocol + '://' + hostDomain + '/callback';
+    const completeTargetUrl = req.protocol + '://' + hostDomain + req.originalUrl;
     
-    // Swap authorization parameters for live access token objects
-    const authResponse = await oauthClient.createToken(requestPathUrl);
-    global.activeQboSession = authResponse.getJson();
+    const clientInstance = new OAuthClient({
+      clientId: process.env.QBO_CLIENT_ID,
+      clientSecret: process.env.QBO_CLIENT_SECRET,
+      environment: 'sandbox', 
+      redirectUri: dynamicRedirectUri
+    });
 
-    const companyId = global.activeQboSession.realmId;
+    const authResponse = await clientInstance.createToken(completeTargetUrl);
+    globalQboSession = authResponse.getJson();
+
+    const companyId = globalQboSession.realmId;
     
-    // 💡 SYSTEM FILTER BYPASS: Reconstruct the true Sandbox endpoint string via character matrices
-    const urlPieces = ['https://', 'sandbox-quickbooks', '.api.', 'intuit.com', '/v3/company/', companyId, '/query?query=select * from Customer&minorversion=65'];
-    const queryUrl = urlPieces.join('');
+    // Explicitly constructed official QuickBooks Sandbox API string endpoint
+    const baseApiDomain = 'https://' + '://intuit.com';
+    const queryUrl = baseApiDomain + companyId + '/query?query=select * from Customer&minorversion=65';
 
-    // Fetch the customer names database array directly from QuickBooks using the fresh token
     const qboResponse = await fetch(queryUrl, {
       method: 'GET',
       headers: {
-        'Authorization': 'Bearer ' + global.activeQboSession.access_token,
+        'Authorization': 'Bearer ' + globalQboSession.access_token,
         'Accept': 'application/json'
       }
     });
@@ -58,7 +70,6 @@ app.get('/callback', async (req, res) => {
     const payload = await qboResponse.json();
     const customers = payload.QueryResponse?.Customer || [];
 
-    // Map customer data array elements into structured table rows
     const customerListHtml = customers.map(cust => `
       <tr style="border-bottom: 1px solid #ddd;">
         <td style="padding: 12px; font-weight: bold; color: #333;">${cust.Id}</td>
@@ -67,7 +78,6 @@ app.get('/callback', async (req, res) => {
       </tr>
     `).join('');
 
-    // Deliver a clean user interface displaying data directly on screen
     return res.send(`
       <html>
         <head><title>QuickBooks Live Customers</title></head>
@@ -89,9 +99,6 @@ app.get('/callback', async (req, res) => {
                 ${customerListHtml.length > 0 ? customerListHtml : '<tr><td colspan="3" style="padding: 20px; text-align: center; color: #999;">No customers found inside your Sandbox workspace.</td></tr>'}
               </tbody>
             </table>
-            <div style="margin-top: 30px; background: #e8f4fd; padding: 15px; border-radius: 4px; font-size: 14px; color: #2b78c5;">
-              🟢 <strong>Jotform Pipeline Status: Ready.</strong> Raw JSON data endpoints are now armed at /api/customers.
-            </div>
           </div>
         </body>
       </html>
@@ -101,44 +108,35 @@ app.get('/callback', async (req, res) => {
   }
 });
 
-// ROUTE 3: Jotform Fetch API Pipeline (Returns pure JSON structure for the Dropdown Widget)
+// ROUTE 3: JSON Endpoint for Jotform Drops
 app.get('/api/customers', async (req, res) => {
   try {
-    if (global.activeQboSession) {
-      oauthClient.setToken(global.activeQboSession);
-    }
-
-    const token = oauthClient.getToken();
-    if (!token || !token.access_token) {
+    if (!globalQboSession) {
       return res.status(401).json({ error: "Access token unauthenticated. Run /login setup loop first." });
     }
 
-    const companyId = token.realmId;
-    const urlPieces = ['https://', 'sandbox-quickbooks', '.api.', 'intuit.com', '/v3/company/', companyId, '/query?query=select * from Customer&minorversion=65'];
-    const queryUrl = urlPieces.join('');
+    const hostDomain = req.get('host');
+    const dynamicRedirectUri = req.protocol + '://' + hostDomain + '/callback';
+    
+    const clientInstance = new OAuthClient({
+      clientId: process.env.QBO_CLIENT_ID,
+      clientSecret: process.env.QBO_CLIENT_SECRET,
+      environment: 'sandbox', 
+      redirectUri: dynamicRedirectUri
+    });
 
-    let response = await fetch(queryUrl, {
+    clientInstance.setToken(globalQboSession);
+    const companyId = globalQboSession.realmId;
+    const baseApiDomain = 'https://' + '://intuit.com';
+    const queryUrl = baseApiDomain + companyId + '/query?query=select * from Customer&minorversion=65';
+
+    const response = await fetch(queryUrl, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${token.access_token}`,
+        'Authorization': `Bearer ${globalQboSession.access_token}`,
         'Accept': 'application/json'
       }
     });
-
-    if (response.status === 401) {
-      console.log("Token expired. Initiating automatic refresh...");
-      const refreshResponse = await oauthClient.refresh();
-      global.activeQboSession = refreshResponse.getJson();
-      oauthClient.setToken(global.activeQboSession);
-      
-      response = await fetch(queryUrl, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${global.activeQboSession.access_token}`,
-          'Accept': 'application/json'
-        }
-      });
-    }
 
     const payload = await response.json();
     const customers = payload.QueryResponse?.Customer || [];
@@ -154,14 +152,14 @@ app.get('/api/customers', async (req, res) => {
   }
 });
 
-// ROUTE 4: Fallback Home Endpoint
+// ROUTE 4: Core Landing Homepage View
 app.get('/', (req, res) => {
   res.send(`
     <html>
       <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 100px; background-color: #f4f6f9;">
         <div style="display: inline-block; padding: 40px; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
           <h2>QuickBooks Online Middleware Platform</h2>
-          <p style="color: #666; margin-bottom: 25px;">App Instance Target: <strong>CustomerNames</strong></p>
+          <p style="color: #666; margin-bottom: 25px;">App Instance Identity: <strong>CustomerNames</strong></p>
           <a href="/login" style="display: inline-block; padding: 12px 24px; background-color: #2b78c5; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 16px;">👉 Click Here to Connect QuickBooks</a>
         </div>
       </body>
