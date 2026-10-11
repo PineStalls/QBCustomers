@@ -2,16 +2,18 @@ const express = require('express');
 const OAuthClient = require('intuit-oauth');
 const fetch = require('node-fetch');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 app.use(cors()); 
 
-// 👈 PASTE YOUR SECURE STRING KEYS DIRECTLY INSIDE THESE QUOTES
+// 👈 ENTER YOUR INTUIT STRINGS SECURELY INSIDE THESE QUOTES
 const CLIENT_ID = 'ABEYdP6kacVC3MUK1LaKJPCsJrP5ugRLdVChCBw7hZaF7PMvsc';
-const CLIENT_SECRET = 'A01XqO7KN3CA3yEgz7vHME0LIKQItG7pvAP9PwBu';
+const CLIENT_SECRET = 'Dbx28Y4D24Fb1MNMn0lFGWiordzShH5Wy4Vb1eME';
 const REDIRECT_URI = 'https://qbcustomers.onrender.com';
 
-console.log("Initializing QBO Client using explicit native formatting.");
+const TOKEN_PATH = path.join(__dirname, 'qbo_token_store.json');
 
 const oauthClient = new OAuthClient({
   clientId: CLIENT_ID,
@@ -20,44 +22,71 @@ const oauthClient = new OAuthClient({
   redirectUri: REDIRECT_URI,
 });
 
-// ROUTE 1: Corrected Login Route using Native SDK Scope variables
+// Helper to load token from disk storage if memory gets wiped
+function loadTokenFromDisk() {
+  try {
+    if (fs.existsSync(TOKEN_PATH)) {
+      const rawData = fs.readFileSync(TOKEN_PATH, 'utf8');
+      const savedTokenData = JSON.parse(rawData);
+      oauthClient.setToken(savedTokenData);
+      console.log("SUCCESS: Recovered saved QuickBooks token from file system.");
+    }
+  } catch (err) {
+    console.error("Error restoring token from storage file:", err.message);
+  }
+}
+
+// Helper to save token to disk storage
+function saveTokenToDisk(tokenResponse) {
+  try {
+    const tokenJson = tokenResponse.getJson();
+    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokenJson, null, 2), 'utf8');
+    console.log("SUCCESS: Cached active token seamlessly to disk storage.");
+  } catch (err) {
+    console.error("Failed writing token payload to file:", err.message);
+  }
+}
+
+// Initialize token recovery on startup
+loadTokenFromDisk();
+
 app.get('/login', (req, res) => {
   try {
-    console.log("Processing /login request...");
-    
-    // FIX: Using OAuthClient.scopes.Accounting directly instead of custom raw string text arrays
+    console.log("Caught request on /login. Generating secure Intuit path...");
     const authUri = oauthClient.authorizeUri({
       scope: [OAuthClient.scopes.Accounting], 
       state: 'intuit-test',
     });
-    
-    console.log("Redirection URI successfully established:", authUri);
     return res.redirect(authUri);
   } catch (error) {
-    console.error("CRITICAL FATAL ROUTE ERROR:", error.message);
-    return res.status(500).send(`Authentication configuration broken: ${error.message}`);
+    return res.status(500).send(`Authentication setup broken: ${error.message}`);
   }
 });
 
-// ROUTE 2: Callback Handler
 app.get('/callback', async (req, res) => {
   try {
-    await oauthClient.createToken(req.url);
-    return res.send('Successfully authenticated with QuickBooks! You can now use Jotform.');
+    const authResponse = await oauthClient.createToken(req.url);
+    saveTokenToDisk(authResponse); // Write to disk so restarts don't destroy session
+    return res.send('Successfully authenticated with QuickBooks! You can now close this and use Jotform.');
   } catch (e) {
     return res.status(500).send(`Authentication error: ${e.message}`);
   }
 });
 
-// ROUTE 3: Dropdown Population Data
 app.get('/api/customers', async (req, res) => {
   try {
+    // If memory is empty, pull token back from disk storage
+    if (!oauthClient.getToken().access_token) {
+      loadTokenFromDisk();
+    }
+
     const token = oauthClient.getToken();
     if (!token || !token.access_token) {
       return res.status(401).json({ error: "Not authenticated. Please click the home page button first." });
     }
 
     const companyId = token.realmId;
+    // Standard URL format for Sandbox QBO Querying
     const url = `https://intuit.com{companyId}/query?query=select * from Customer&minorversion=65`;
 
     let response = await fetch(url, {
@@ -68,8 +97,12 @@ app.get('/api/customers', async (req, res) => {
       }
     });
 
+    // Handle automated token refreshing smoothly if expired
     if (response.status === 401) {
-      await oauthClient.refresh();
+      console.log("Token expired. Executing automated background refresh routine...");
+      const refreshResponse = await oauthClient.refresh();
+      saveTokenToDisk(refreshResponse); // Save the freshly renewed token
+      
       const newToken = oauthClient.getToken();
       response = await fetch(url, {
         method: 'GET',
@@ -94,14 +127,13 @@ app.get('/api/customers', async (req, res) => {
   }
 });
 
-// ROUTE 4: Home Landing View
 app.get('/', (req, res) => {
   res.send(`
     <html>
       <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 100px; background-color: #f4f6f9;">
         <div style="display: inline-block; padding: 40px; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
-          <h2 style="color: #333;">QuickBooks Online Middleware Platform</h2>
-          <p style="color: #666; margin-bottom: 25px;">The server is actively listening. Use the click launch mechanism below to authorize data streams.</p>
+          <h2>QuickBooks Online Middleware Platform</h2>
+          <p style="color: #666; margin-bottom: 25px;">Click the button below to complete your one-time authentication layer:</p>
           <a href="/login" style="display: inline-block; padding: 12px 24px; background-color: #2b78c5; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 16px;">👉 Click Here to Connect QuickBooks</a>
         </div>
       </body>
